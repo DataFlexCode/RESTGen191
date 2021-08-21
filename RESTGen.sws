@@ -1,0 +1,15 @@
+[Properties]
+Version=19.1
+[WorkspacePaths]
+ConfigFile=.\Programs\Config.ws
+[TestProjects]
+TestWindowsProject=RestGen.src
+[Conditionals]
+Is$WebApp=False
+[Projects]
+Project0=RestGen.src
+Project1=StructTest.src
+Project2=MyTest.src
+Project3=StructGen.src
+[ProjectParameters]
+RestGen.src=<workspace>

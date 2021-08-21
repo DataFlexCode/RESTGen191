@@ -1,0 +1,5 @@
+[C:\Projects\RESTGen190\AppSrc\RestGen.vw]
+Source212=Send WriteStruct hoMemb (sPre + UCFirst(Self, sName)) iChn (iLevel + 1) sName sParent
+ConditionEnabled212=0
+Condition212= 
+212=1

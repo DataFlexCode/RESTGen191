@@ -1,0 +1,544 @@
+//************************************************************************
+//
+// Confidential Trade Secret.
+// Copyright 1987-1998 Data Access Corporation, Miami FL, USA
+// All Rights reserved
+// DataFlex is a registered trademark of Data Access Corporation.
+//
+//****************************************************************************//
+//                                                                            //
+// $File name  : DirSel.pkg                                                   //
+// $File title : Directory Selector class  (DirectorySelectDialog)            //
+// Notice      :                                                              //
+// $Author(s)  : Dennis Piccioni                                              //
+//                                                                            //
+// $Rev History                                                               //
+//                                                                            //
+// DP 12/14/98   File created                                                 //
+//****************************************************************************//
+//
+// *** PUBLIC ACCESS PROPERTIES ***
+//
+// *** properties that can be set before dialog activation ***
+//
+// // default directory (must include full path) - i.e. "c:\windows\system"
+// Property String psDefaultDirectory Public ""
+//
+// // label of form that displays path
+// Property String psPathFormLabel Public "Current Directory:"
+//
+// *** properties to query after dialog deactivated ***
+//
+// // has user chosen a directory? 1 = Yes, 0 = canceled
+// Property Integer piDirectorySelected Public 0
+//
+// // chosen directory path - i.e. "c:\windows\system"
+// Property String psSelectedDirectoryPath Public ""
+//
+// // chosen directory name (without path) - i.e. "system"
+// Property String psSelectedDirectoryName Public ""
+//
+// *** END OF PUBLIC ACCESS PROPERTIES ***
+//
+//
+// *** EXAMPLE DIALOG OBJECT ***
+//
+//    Use DirSel.pkg   // DirectorySelectDialog class package
+//
+//    Object oDirectSelect is a DirectorySelectDialog
+//        // set Dialog caption
+//        set Label to "Choose Install Directory"
+//        // set label of form that displays path to directory
+//        // (this defaults to "Current Directory:")
+//        set psPathFormLabel to "Currently Selected Directory"
+//        // set default directory of dialog when popped up the first time
+//        set psDefaultDirectory to "C:\Windows\System"
+//    End_Object  // oDirectSelect
+//
+// *** EXAMPLE OBJECT THAT USES DIALOG ***
+//
+//    Object oToForm is a Form
+//        Set Label to "Select Directory to Install To:"
+//        Set Label_Col_Offset to 0
+//        Set Label_Justification_Mode to jMode_Top
+//        Set Prompt_Button_Mode to pb_PromptOn
+//        Set Size to 13 316
+//        Set Location to 77 23
+//
+//        Procedure Prompt
+//            local integer iDialog iOk
+//            local string sPath
+//
+//            get Object_ID of (oDirectSelect(Self)) to iDialog
+//
+//            send Show_Dialog to iDialog  // pops up dialog
+//
+//            // this property's value will be:
+//            //      0 if a directory was selected, 1 if dialog was canceled
+//            get piDirectorySelected of iDialog to iOk
+//
+//            if (iOk<>0) begin
+//                // get full path to directory chosen by user in dialog
+//                get psSelectedDirectoryPath of iDialog to sPath
+//                set Value item 0 to sPath
+//            end
+//        End_Procedure  // Prompt
+//
+//    End_Object    // oToForm
+//
+//****************************************************************************//
+
+Use Windows
+
+Register_Object oSelectButton
+
+Class cSelectDirectoryButton is a Button
+    Procedure Construct_Object
+        Forward Send Construct_Object
+
+        Set Size to 14 51
+        Set Location to 166 24
+    End_Procedure  // Construct_Object
+
+    Procedure OnClick
+        //indicate to parent object that user has chosen a directory
+        delegate send SetChosenDirectoryPath
+        send Close_Panel
+    End_Procedure // OnClick
+End_Class  // SelectDirectoryButton
+
+Class cCloseModalButton is a Button
+    Procedure Construct_Object
+        Forward Send Construct_Object
+
+        Set Size to 14 51
+        Set Location to 166 99
+    End_Procedure  // Construct_Object
+
+    Procedure OnClick
+        //indicate that user has NOT chosen a directory (cancel)
+        delegate set piDirectorySelected to 0
+        send Close_Panel
+    End_Procedure // OnClick
+End_Class  // SelectButton
+
+Class cPathDisplayForm is a Form
+
+    Procedure Construct_Object
+        Forward Send Construct_Object
+
+        // set inherited properties
+        set Object_Shadow_State to True
+        set Value item 0 to "My Computer"
+        Set Label_Col_Offset to 0
+        Set Label_Justification_Mode to jMode_Top
+        Set Size to 13 161
+        Set Location to 148 7
+    End_Procedure  // Construct_Object
+
+End_Class  // cPathDisplayForm
+
+Class cDirectoryList is a List
+
+    Procedure Construct_Object
+        Forward Send Construct_Object
+
+        // define new properties
+
+        // has the list been seeded?
+        Property Integer piSeedList Public 0
+
+        Property String psParentType Public "My Computer"
+        Property String psCurrentType Public "My Computer"
+        Property String psCurrentPath Public ""
+        Property String psCurrentDirName Public ""
+
+        // set inherited properties
+        Set Select_Mode to SINGLE_SELECT
+        Set Label_Row_Offset to 1
+        Set Label_Col_Offset to 0
+        Set Label_Justification_Mode to jMode_Top
+        Set Size to 134 161
+        Set Location to 5 7
+
+        // <Enter> should fire the default button
+        On_Key KEnter send FireDefaultButton Private
+
+        // define child objects
+
+        // stores directory tree for enumeration
+        Object oDirTree is a Set
+        End_Object  // oDrives
+
+        // stores drives or directories for enumeration
+        Object oDirs is a Set
+        End_Object  // oDirs
+
+    End_Procedure  // Construct_Object
+
+    Procedure FireDefaultButton
+        send KeyAction to (oSelectButton(Self))
+    End_Procedure  // FireDefaultButton
+
+    //ensure list only gets seeded once
+    Procedure OnSetFocus
+        local integer iInitAct iDirExists
+        local string sDfltDir sLabel
+
+        get piSeedList to iInitAct
+
+        // first time we activate list
+        if (iInitAct=0) begin
+            delegate get psDefaultDirectory to sDfltDir
+
+            if (sDfltDir<>"") begin
+                get DirExists sDfltDir to iDirExists
+                if (iDirExists=1) send DoDefaultDirectory sDfltDir
+                else send EnumerateDrives
+            end
+            else send EnumerateDrives
+
+            delegate get psPathFormLabel to sLabel
+            delegate send SetPathFormLabel sLabel
+        end
+
+        set piSeedList to 1
+    End_Procedure  // OnSetFocus
+
+    // does the directory exist? - No = 0, Yes = 1
+    Function DirExists string sDirName returns Integer
+        local string sDir sTmp
+        local integer iDirExists iCh
+        move 1 to iDirExists
+        move "dir:" to sDir
+        append sDir sDirName
+        get Seq_New_Channel to iCh  // get free channel for input
+        direct_input channel iCh sDir
+            repeat
+                readln channel iCh sTmp
+                if (trim(sTmp)="") move 0 to iDirExists
+                else begin
+                    move 1 to iDirExists
+                    indicate seqeof True  // end loop
+                end
+            until (seqeof)
+        close_input channel iCh
+        send Seq_Release_Channel iCh
+        function_return iDirExists
+    End_Function  // Dir_Exists
+
+    // parse path into directories and store them into the array
+    Procedure DoParsePath string sPath
+        local integer iArray iLen i iDriveCount
+        local string sDir sChar //sVoid
+
+        get Object_ID of (oDirTree(Self)) to iArray
+
+        left sPath to sDir 2  // get directory from path
+        send Add_Element to iArray sDir
+
+        length sPath to iLen
+        send DoEnumerate "-99" sDir
+
+        if (iLen>3) begin  // more than just a directory (i.e. "C:" or "C:\")
+            right sPath to sPath (iLen-3)  // remove "C:\"
+            move (iLen-3) to iLen
+
+            move "" to sDir
+            repeat
+                left sPath to sChar 1
+                if (sChar<>"\") append sDir sChar
+                else begin  // done with current directory
+                    send Add_Element to iArray sDir  // add directory to array
+                    send DoEnumerate "-99" sDir
+                    increment iDriveCount
+                    move "" to sDir
+                end
+                decrement iLen
+                right sPath to sPath iLen  // remove 1st char from orig path
+            until (iLen=0)
+            if (sDir<>"") begin
+                send Add_Element to iArray sDir  // add last directory to array
+                send DoEnumerate "-99" sDir
+                increment iDriveCount
+            end
+        end
+
+        if (iDriveCount=0) begin  // only a drive
+            set psCurrentType to "Drive"
+            set psParentType to "My Computer"
+        end
+        else begin
+            set psCurrentType to "Directory"
+            if (iDriveCount=1) set psParentType to "Drive"
+            else set psParentType to "Directory"
+        end
+    End_Procedure  // DoParsePath
+
+    // set up everything needed for a default directory
+    Procedure DoDefaultDirectory string sDfltDir
+        local integer iLen iCount iArray
+
+        get Object_ID of (oDirTree(Self)) to iArray
+        length sDfltDir to iLen
+
+        send DoParsePath sDfltDir
+
+        // notify parent of newly selected path
+        delegate send SetDisplayPath sDfltDir
+    End_Procedure  // DoDefaultDirectory
+
+    //enumerate currently selected item
+    Procedure StartEnumerationProcess
+        local integer iCurItem
+
+        get Current_Item to iCurItem
+        send DoEnumerate iCurItem
+    End_Procedure  // StartEnumerationProcess
+
+    Procedure Mouse_Click integer i1 integer i2
+        send StartEnumerationProcess
+    End_Procedure  // Mouse_Click
+
+    // enumerate all valid drives & add them to list
+    Procedure EnumerateDrives
+        local integer i iValid
+        local string sDrive
+
+        send Delete_Data  // clear list
+
+        for i from 1 to 26
+            move (character(i+64)) to sDrive  // 65="A"
+            valid_drive sDrive iValid
+            if (iValid=0) send Add_Item msg_None (string(character(i+64)+":"))
+        loop
+    End_Procedure  // EnumerateDrives
+
+    // add or remove items from current directory tree (kept in array)
+    // if sDo=My Computer, create new tree with root=sWhat (drive)
+    // else add or remove sWhat (directories)
+    Procedure DoManageTree string sDo string sWhat
+        local integer iArray iCount i
+        local string sPath
+
+        get Object_ID of (oDirTree(Self)) to iArray
+
+        if (sDo="My Computer") begin
+            send Delete_Data to iArray
+            send Add_Element to iArray sWhat
+        end
+        else if (sDo="Add") send Add_Element to iArray sWhat
+        else begin  // remove item
+            move (Item_Count(iArray)-1) to iCount
+            send Delete_Item to iArray iCount
+        end
+
+        move (Item_Count(iArray)-1) to iCount
+
+        if (iCount>=0) begin
+            for i from 0 to iCount
+                if (i=0) begin
+                    move (String_Value(iArray,i)) to sPath
+                    append sPath ":\"
+                end
+                else if (i=1) append sPath (String_Value(iArray,i))
+                else append sPath "\" (String_Value(iArray,i))
+            loop
+            if (iCount=0) begin
+                set psCurrentType to "Drive"
+                set psParentType to "My Computer"
+            end
+            else if (iCount=1) begin
+                set psCurrentType to "Directory"
+                set psParentType to "Drive"
+            end
+            else begin  // (iCount>1)
+                set psCurrentType to "Directory"
+                set psParentType to "Directory"
+            end
+        end
+        else begin  // (iCount<0)
+            move "My Computer" to sPath
+            set psCurrentType to "My Computer"
+        end
+
+        set psCurrentPath to sPath
+
+        // notify parent of newly selected path
+        delegate send SetDisplayPath (psCurrentPath(Self))
+    End_Procedure  // DoManageTree
+
+    // start enumeration of selected item
+    // if iCurItem = -99
+    //   => user is not physically selecting an item
+    //   => instead, directory is being passed in as 2nd parameter (sDfltVal)
+    Procedure DoEnumerate integer iCurItem string sDfltVal
+        local string sVal
+        local integer iLen
+
+        if (iCurItem<>-99) get Value item iCurItem to sVal
+        else move sDfltVal to sVal  // setting up default directory
+
+        if (sVal="[..]") begin
+            send DoManageTree "Remove" sVal
+            if (psCurrentType(Self)="My Computer") send EnumerateDrives
+            else if (psCurrentType(Self)<>"Directory") begin  // drive
+                left sVal to sVal 1
+                send DoEnumerateDirectory sVal "Drive"
+            end
+            else begin  // directory
+                if (iCurItem<>-99) begin
+                    length sVal to iLen
+                    move (mid(sVal,(iLen-2),2)) to sVal
+                end
+                send DoEnumerateDirectory sVal "Directory"
+            end
+        end
+        else if (psCurrentType(Self)="My Computer") begin  // drive
+            left sVal to sVal 1
+            send DoManageTree "My Computer" sVal
+            send DoEnumerateDirectory sVal "Drive"
+        end
+        else begin  // directory
+            if (iCurItem<>-99) begin
+                length sVal to iLen
+                move (mid(sVal,(iLen-2),2)) to sVal
+            end
+            send DoManageTree "Add" sVal
+            send DoEnumerateDirectory sVal "Directory"
+        end
+        // store currently selected directory name
+        set psCurrentDirName to sVal
+    End_Procedure  // DoEnumerate
+
+    // enumerate directories in chosen drive or directory
+    // iDoDisplayList determines if the list should be refreshed
+    Procedure DoEnumerateDirectory string sDrive string sType
+        local integer iCh iArray iMax i
+        local string sDir sLine sPath
+
+        get Object_ID of (oDirs(Self)) to iArray
+
+        send Delete_Data to iArray  // clear array
+
+        get Seq_New_Channel to iCh  // get free channel for input
+
+        move "dir: " to sDir
+        get psCurrentPath to sPath
+        append sDir sPath
+
+        direct_input channel iCh sDir
+            repeat
+                readln channel iCh sLine
+                if ((sLine<>"") AND (sLine<>"[.]")) ;
+                    if (left(sLine,1)="[") send Add_Element to iArray sLine
+            until (seqeof)
+        close_input channel iCh
+
+        // must release channel or it will be incremented next time
+        send Seq_Release_Channel iCh
+
+        send Delete_Data  // clear list
+
+        // make sure directories list in alphabetical order
+        send Sort_Items to iArray
+        move (Item_Count(iArray)-1) to iMax
+
+        if (sType<>"Directory") send Add_Item msg_None "[..]"
+        for i from 0 to iMax
+            send Add_Item msg_None (String_Value(iArray,i))
+        loop
+    End_Procedure  // DoEnumerateDirectory
+
+End_Class  // cDirectoryList
+
+Class DirectorySelectDialog is a ModalPanel
+
+    Procedure Construct_Object
+        Forward Send Construct_Object
+
+        // define new properties
+
+        // PUBLIC ACCESS PROPERTIES
+
+        // *** properties that can be set before dialog activation ***
+
+        // default directory (must include full path) - i.e. "c:\windows\system"
+        Property String psDefaultDirectory Public ""
+
+        // label of form that displays path
+        Property String psPathFormLabel Public "Current Directory:"
+
+        // *** properties to query after dialog deactivated ***
+
+        // has user chosen a directory? 1 = Yes, 0 = canceled
+        Property Integer piDirectorySelected Public 0
+
+        // chosen directory path - i.e. "c:\windows\system"
+        Property String psSelectedDirectoryPath Public ""
+
+        // chosen directory name (without path) - i.e. "system"
+        Property String psSelectedDirectoryName Public ""
+
+        // END OF PUBLIC ACCESS PROPERTIES
+
+        // set inherited properties
+        set Locate_Mode to Center_on_Parent
+        Set Sysmenu_Icon to FALSE
+        Set Minimize_Icon to FALSE
+        // default label
+        Set Label to "Directory Selector"
+        Set Size to 199 178
+        Set Location to 7 197
+
+        // the actual list that displays the directories
+        Object oDirectoryList is a cDirectoryList
+        End_Object    // oPathList
+
+        // displays currently selected path
+        Object oPathDisplayForm is a cPathDisplayForm
+            set TextColor to clNavy  // makes it stand out more
+        End_Object    // oPathForm
+
+        Object oSelectButton is a cSelectDirectoryButton
+            Set Default_State to TRUE
+            Set Label to "&Ok"
+        End_Object    // oSelectButton
+
+        Object oCancelButton is a cCloseModalButton
+            Set Label to "&Cancel"
+        End_Object    // oCancelButton
+
+        On_Key Key_Alt+Key_O send KeyAction to (oSelectButton(Self))
+        On_Key Key_Alt+Key_C send KeyAction to (oCancelButton(Self))
+    End_Procedure  // Construct_Object
+
+    //user has chosen a directory
+    //set public access properties of class to reflect this
+    Procedure SetChosenDirectoryPath
+        local string sPath sName
+
+        get psCurrentPath of (oDirectoryList(Self)) to sPath
+        set psSelectedDirectoryPath to sPath
+        get psCurrentDirName of (oDirectoryList(Self)) to sName
+        set psSelectedDirectoryName to sName
+
+        set piDirectorySelected to 1
+    End_Procedure  // SetChosenDirectoryPath
+
+    // display currently selected path
+    Procedure SetDisplayPath string sDisplayPath
+        set Value of (oPathDisplayForm(Self)) item 0 to sDisplayPath
+    End_Procedure  // SetDisplayPath
+
+    // set label of form showing currently selected path
+    Procedure SetPathFormLabel string sDisplayLabel
+        set Label of (oPathDisplayForm(Self)) to sDisplayLabel
+    End_Procedure  // SetDisplayPath
+
+    // public method of activating object
+    Procedure Show_Dialog
+        send Popup_Modal
+    End_Procedure  // Show_Dialog
+
+End_Class  // DirectorySelectDialog

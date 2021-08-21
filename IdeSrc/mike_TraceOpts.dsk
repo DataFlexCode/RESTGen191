@@ -1,0 +1,18 @@
+[RestGen.src [file not found]]
+0=msg_paint
+[RestGen.src [file not found]]
+1=msg_notify_application_activation
+[RestGen.src [file not found]]
+2=set_focus
+[RestGen.src [file not found]]
+3=msg_onwmpaint
+[StructGen.src]
+0=msg_paint
+1=msg_notify_application_activation
+2=set_focus
+3=msg_onwmpaint
+[RestGen.src]
+0=msg_paint
+1=msg_notify_application_activation
+2=set_focus
+3=msg_onwmpaint
